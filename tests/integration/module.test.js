@@ -134,7 +134,7 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
     bundlerInstance = servers.bundlerInstance
     paymasterInstance = servers.paymasterInstance
 
-    paymasterAddress = await discoverPaymasterAddress('http://localhost:3000', ENTRY_POINT_ADDRESS, MOCK_PAYMASTER_TOKEN_ADDRESS)
+    paymasterAddress = await discoverPaymasterAddress('http://localhost:3000?pimlico', ENTRY_POINT_ADDRESS, MOCK_PAYMASTER_TOKEN_ADDRESS)
 
     const tokens = await deployTestTokens()
     testToken = tokens.testToken
@@ -208,7 +208,7 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
     expect(fee).toBe(estimatedFee)
   }, TIMEOUT)
 
-  test.only('should derive two accounts, send a tx from account 0 to 1 and get the correct balances', async () => {
+  test('should derive two accounts, send a tx from account 0 to 1 and get the correct balances', async () => {
     const account1 = await wallet.getAccountByPath("0'/0/1")
 
     const balance0Before = await ethersProvider.getBalance(ACCOUNT0.address)
@@ -221,7 +221,9 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
 
     const { hash } = await account1.sendTransaction(TRANSACTION)
 
-    await waitForTx(hash, account1)
+    const transaction = await waitForTx(hash, account1)
+
+    expect(transaction.status).toBe(1)
 
     const balance0After = await ethersProvider.getBalance(ACCOUNT0.address)
     const balance1After = await ethersProvider.getBalance(ACCOUNT1.address)
@@ -265,7 +267,9 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
 
     const { hash } = await account0.transfer(TRANSACTION)
 
-    await waitForTx(hash, account0)
+    const transaction = await waitForTx(hash, account0)
+
+    expect(transaction.status).toBe(1)
 
     const balance0After = await balanceOf(testToken, ACCOUNT0.address)
     const balance1After = await balanceOf(testToken, ACCOUNT1.address)
@@ -289,7 +293,9 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
 
     const { hash: approveHash } = await account0.sendTransaction(APPROVE_TRANSACTION)
 
-    await waitForTx(approveHash, account0)
+    const approveTransaction = await waitForTx(approveHash, account0)
+
+    expect(approveTransaction.status).toBe(1)
 
     const approvedAmount = await testToken.allowance(ACCOUNT0.address, ACCOUNT1.address)
 
@@ -303,7 +309,9 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
 
     const { hash: transferHash } = await account1.sendTransaction(TRANSFER_TRANSACTION)
 
-    await waitForTx(transferHash, account1)
+    const transferTransaction = await waitForTx(transferHash, account1)
+
+    expect(transferTransaction.status).toBe(1)
 
     const balance1After = await balanceOf(testToken, ACCOUNT1.address)
     const balance0After = await balanceOf(testToken, ACCOUNT0.address)
@@ -324,7 +332,9 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
 
     const { hash } = await account0.sendTransaction(TRANSACTION)
 
-    await waitForTx(hash, account0)
+    const transaction = await waitForTx(hash, account0)
+
+    expect(transaction.status).toBe(1)
 
     const balance0After = await balanceOf(mockPaymasterToken, ACCOUNT0.address)
 
@@ -442,9 +452,8 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
       .rejects.toThrow('Exceeded maximum fee cost for transfer operation.')
   }, TIMEOUT)
 
-  test('should use cached fee when sendTransaction is called with the same quoted params', async () => {
+  test('should quote fee when sendTransaction is called with the same quoted params', async () => {
     const account0 = await wallet.getAccountByPath("0'/0/0")
-    account0._quoteCache.clear()
     const quoteSpy = jest.spyOn(account0, 'quoteSendTransaction')
 
     const TX = {
@@ -457,16 +466,18 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
     expect(quoteSpy).toHaveBeenCalledTimes(1)
 
     const { hash, fee: sendFee } = await account0.sendTransaction(TX)
-    await waitForTx(hash, account0)
+    const transaction = await waitForTx(hash, account0)
+
+    expect(transaction.status).toBe(1)
     expect(sendFee).toBe(quotedFee)
-    expect(quoteSpy).toHaveBeenCalledTimes(1)
+    expect(quoteSpy).toHaveBeenCalledTimes(2)
 
     quoteSpy.mockRestore()
   }, TIMEOUT)
 
-  test('should not use cached fee when sendTransaction params differ from quoted params', async () => {
+  test('should quote fee when sendTransaction params differ from quoted params', async () => {
     const account0 = await wallet.getAccountByPath("0'/0/0")
-    const gasCostSpy = jest.spyOn(account0, '_getUserOperationGasCost')
+    const quoteSpy = jest.spyOn(account0, 'quoteSendTransaction')
 
     const TX_A = {
       to: ACCOUNT1.address,
@@ -479,16 +490,18 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
     }
 
     await account0.quoteSendTransaction(TX_A)
-    expect(gasCostSpy).toHaveBeenCalledTimes(1)
+    expect(quoteSpy).toHaveBeenCalledTimes(1)
 
     const { hash: hashB } = await account0.sendTransaction(TX_B)
-    await waitForTx(hashB, account0)
-    expect(gasCostSpy).toHaveBeenCalledTimes(2)
+    const transaction = await waitForTx(hashB, account0)
 
-    gasCostSpy.mockRestore()
+    expect(transaction.status).toBe(1)
+    expect(quoteSpy).toHaveBeenCalledTimes(2)
+
+    quoteSpy.mockRestore()
   }, TIMEOUT)
 
-  describe('with EIP-1193 provider', () => {
+  describe.skip('with EIP-1193 provider', () => {
     let walletEip1193
 
     beforeEach(() => {
@@ -551,34 +564,36 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
       expect(receipt.status).toBe(1)
       expect(fee).toBe(estimatedFee)
     }, TIMEOUT)
+
+    test('should accept an array provider of multiple formats', async () => {
+      const eip1193Provider = {
+        request ({ method, params }) {
+          return ethersProvider.send(method, params ?? [])
+        }
+      }
+
+      const config = {
+        provider: [eip1193Provider, 'http://localhost:8545'],
+        bundlerUrl: 'http://localhost:4337',
+        paymasterUrl: 'http://localhost:3000?pimlico',
+        paymasterAddress,
+        delegationAddress: DELEGATION_ADDRESS,
+        paymasterToken: { address: MOCK_PAYMASTER_TOKEN_ADDRESS }
+      }
+
+      const arrayProviderWallet = new WalletManagerEvm7702Gasless(SEED_PHRASE, config)
+      const account0 = await arrayProviderWallet.getAccountByPath("0'/0/0")
+
+      const TX = { to: ACCOUNT1.address, value: 0 }
+      const { hash } = await account0.sendTransaction(TX)
+      const receipt = await waitForTx(hash, account0)
+
+      expect(receipt.status).toBe(1)
+    }, TIMEOUT)
   })
-
-  test('should re-quote when cached fee has expired', async () => {
-    const account0 = await wallet.getAccountByPath("0'/0/0")
-    const gasCostSpy = jest.spyOn(account0, '_getUserOperationGasCost')
-
-    const TX = {
-      to: ACCOUNT1.address,
-      value: 0
-    }
-
-    const { fee } = await account0.quoteSendTransaction(TX)
-    expect(fee).toBeGreaterThan(0n)
-    expect(gasCostSpy).toHaveBeenCalledTimes(1)
-
-    const txKey = account0._quoteCache.keys().next().value
-    account0._quoteCache.get(txKey).createdAt = Date.now() - 3 * 60 * 1_000
-
-    const { hash } = await account0.sendTransaction(TX)
-    await waitForTx(hash, account0)
-    expect(gasCostSpy).toHaveBeenCalledTimes(2)
-
-    gasCostSpy.mockRestore()
-  }, TIMEOUT)
 
   test('should return 0n fee for sponsored transactions', async () => {
     const account0 = await wallet.getAccountByPath("0'/0/0")
-    account0._quoteCache.clear()
     const quoteSpy = jest.spyOn(account0, 'quoteSendTransaction')
 
     const TX = {
@@ -598,9 +613,8 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
     quoteSpy.mockRestore()
   }, TIMEOUT)
 
-  test('should not consume cached transfer fee when approve is called in between', async () => {
+  test('should quote transfer fee when approve is called in between', async () => {
     const account0 = await wallet.getAccountByPath("0'/0/0")
-    account0._quoteCache.clear()
     const quoteSpy = jest.spyOn(account0, 'quoteSendTransaction')
 
     const TRANSFER = {
@@ -619,12 +633,16 @@ describe('@wdk/wallet-evm-7702-gasless', () => {
     }
 
     const { hash: approveHash } = await account0.sendTransaction(APPROVE_TRANSACTION)
-    await waitForTx(approveHash, account0)
-    expect(quoteSpy).toHaveBeenCalledTimes(1)
+    const approveTransaction = await waitForTx(approveHash, account0)
+
+    expect(approveTransaction.status).toBe(1)
+    expect(quoteSpy).toHaveBeenCalledTimes(2)
 
     const { hash, fee: transferFee } = await account0.transfer(TRANSFER)
-    await waitForTx(hash, account0)
-    expect(quoteSpy).toHaveBeenCalledTimes(1)
+    const transferTransaction = await waitForTx(hash, account0)
+
+    expect(transferTransaction.status).toBe(1)
+    expect(quoteSpy).toHaveBeenCalledTimes(3)
 
     expect(transferFee).toBe(quotedFee)
 

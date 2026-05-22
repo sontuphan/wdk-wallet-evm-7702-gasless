@@ -18,6 +18,7 @@ module.exports = {
       },
       mining: {
         autoMine: true,
+        interval: [0, 0]
       }
     }
   }
